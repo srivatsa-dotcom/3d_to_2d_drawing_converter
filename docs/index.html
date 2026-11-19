@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D to 2D drawing converter: STEP and STL to manufacturing drawings</title>
+<meta name="description" content="Drop a STEP or STL assembly and get a dimensioned 2D drawing for every part: three views, hidden lines, hole table, PDF, DXF and laser-cut profiles. Free, runs in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' fill='%23fff' stroke='%2316202A' stroke-width='2'/%3E%3Cpath d='M2 22h28M16 22v8' stroke='%2316202A' stroke-width='2'/%3E%3Cpath d='M7 8h10v8H7z' fill='none' stroke='%231F5FBF' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --board: #e4e9e8;      /* drafting board */
+    --sheet: #ffffff;
+    --ink: #16202a;
+    --ink-soft: #4c5964;
+    --rule: #b9c3c6;
+    --dim: #1f5fbf;        /* dimension blue, same as the drawings */
+    --dim-wash: #e3ecf8;
+    --redline: #b3402c;
+    --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+    --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--board); color: var(--ink); font: 400 16px/1.5 var(--body); }
+  a { color: var(--dim); }
+  :focus-visible { outline: 2px solid var(--dim); outline-offset: 2px; }
+
+  /* header: the page title is set like a drawing title */
+  .bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+    padding: 20px clamp(16px, 3vw, 36px) 14px; border-bottom: 1.5px solid var(--ink); background: var(--board); }
+  .bar h1 { margin: 0; font: 700 clamp(30px, 4.2vw, 48px)/0.95 var(--display); letter-spacing: -0.01em; }
+  .bar h1 .arrow { font-weight: 500; }
+  .bar p { margin: 6px 0 0; color: var(--ink-soft); max-width: 62ch; }
+  .bar nav { display: flex; gap: 20px; font-weight: 500; }
+  .bar nav a { color: var(--ink); text-decoration: none; border-bottom: 1.5px solid transparent; }
+  .bar nav a:hover { border-color: var(--ink); }
+
+  /* app */
+  .app { display: grid; grid-template-columns: 400px minmax(0, 1fr); min-height: calc(100vh - 110px); }
+  .rail { border-right: 1.5px solid var(--ink); padding: 18px; display: flex; flex-direction: column; gap: 18px; background: var(--board); }
+  .drop { position: relative; display: block; border: 1.5px dashed var(--dim); background: var(--sheet); padding: 22px 18px 18px; cursor: pointer; transition: background .15s; }
+  .drop:hover, .drop.over { background: var(--dim-wash); }
+  .drop strong { display: block; font: 600 24px/1.1 var(--display); }
+  .drop span { color: var(--ink-soft); font-size: 14px; }
+  .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  /* a dimension line along the drop zone's top edge */
+  .drop::before { content: ""; position: absolute; left: 10px; right: 10px; top: 8px; height: 0; border-top: 1px solid var(--dim); }
+  .drop::after { content: "drop here"; position: absolute; top: 1px; left: 50%; transform: translateX(-50%); background: var(--sheet); color: var(--dim); font: 500 12px/1 var(--body); padding: 0 6px; }
+  .drop:hover::after, .drop.over::after { background: var(--dim-wash); }
+  .linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--dim); text-decoration: underline; cursor: pointer; }
+  .privacy { font-size: 13.5px; color: var(--ink-soft); margin: -8px 0 0; }
+
+  fieldset { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+  legend { font: 600 19px/1 var(--display); margin-bottom: 10px; padding: 0; }
+  label.f { display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; font-weight: 500; }
+  label.f.wide { grid-column: 1 / -1; }
+  select, input[type=text], input[type=number] { font: inherit; font-size: 15px; padding: 6px 8px; border: 1px solid var(--rule); background: var(--sheet); color: var(--ink); border-radius: 0; width: 100%; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14.5px; grid-column: 1 / -1; }
+  .check input { width: 18px; height: 18px; accent-color: var(--dim); }
+
+  .parts h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px; font: 600 19px/1 var(--display); }
+  .parts h2 small { font: 400 13px var(--body); color: var(--ink-soft); }
+  .tablewrap { max-height: 42vh; overflow: auto; border: 1px solid var(--rule); background: var(--sheet); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  th { position: sticky; top: 0; background: var(--sheet); text-align: left; font-weight: 600; padding: 6px 8px; border-bottom: 1.5px solid var(--ink); }
+  td { padding: 6px 7px; border-bottom: 1px solid #e6eaeb; vertical-align: top; }
+  td.name { word-break: break-word; font-weight: 500; }
+  td.size { white-space: nowrap; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f2f5f7; }
+  tbody tr.active { background: var(--dim-wash); box-shadow: inset 3px 0 0 var(--dim); }
+  tbody tr.hw { cursor: default; color: #8a959c; }
+  tbody tr.hw:hover { background: none; }
+
+  .viewer { display: flex; flex-direction: column; min-width: 0; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; padding: 14px clamp(14px, 2vw, 24px); border-bottom: 1px solid var(--rule); }
+  .toolbar h2 { margin: 0; font: 600 26px/1 var(--display); white-space: pre; overflow: hidden; text-overflow: ellipsis; max-width: 48ch; }
+  .toolbar .meta { color: var(--ink-soft); font-size: 14px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button.b { font: 500 14.5px/1 var(--body); padding: 9px 12px; border: 1.5px solid var(--ink); background: var(--sheet); color: var(--ink); cursor: pointer; border-radius: 0; }
+  button.b:hover:not(:disabled) { background: var(--ink); color: var(--sheet); }
+  button.b.primary { background: var(--ink); color: var(--sheet); }
+  button.b.primary:hover:not(:disabled) { background: var(--dim); border-color: var(--dim); }
+  button.b:disabled { opacity: .45; cursor: not-allowed; }
+  .stage { position: relative; flex: 1; padding: clamp(12px, 2.4vw, 32px); display: flex; flex-direction: column; gap: 8px; }
+  #sheet { flex: 1; min-height: 420px; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; user-select: none; }
+  #sheet:active { cursor: grabbing; }
+  #sheet svg { width: 100%; height: auto; max-height: calc(100vh - 230px); background: #fff; box-shadow: 0 1px 0 var(--rule), 0 14px 30px -18px rgba(22, 32, 42, .45); }
+  .stagefoot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13.5px; color: var(--ink-soft); }
+  #status[data-kind=error] { color: var(--redline); font-weight: 500; }
+  .busy #sheet, .drawing #sheet { opacity: .55; transition: opacity .2s; }
+
+  /* info */
+  .info { border-top: 1.5px solid var(--ink); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .info section { padding: 28px clamp(16px, 3vw, 36px) 36px; border-right: 1px solid var(--rule); }
+  .info section:last-child { border-right: 0; }
+  .info h2 { font: 600 26px/1.05 var(--display); margin: 0 0 12px; }
+  .info p, .info li { max-width: 60ch; }
+  .info ol, .info ul { padding-left: 20px; margin: 0; }
+  .info li { margin-bottom: 6px; }
+  pre { background: var(--ink); color: #e9eef0; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.55; }
+  footer { border-top: 1px solid var(--rule); padding: 16px clamp(16px, 3vw, 36px); font-size: 13.5px; color: var(--ink-soft); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+
+  @media (max-width: 980px) {
+    .app { grid-template-columns: 1fr; }
+    .rail { border-right: 0; border-bottom: 1.5px solid var(--ink); }
+    .tablewrap { max-height: 260px; }
+    .info { grid-template-columns: 1fr; }
+    .info section { border-right: 0; border-bottom: 1px solid var(--rule); }
+    #sheet { min-height: 240px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div>
+    <h1>3D model <span class="arrow">→</span> 2D drawings</h1>
+    <p>Drop a STEP or STL assembly. Every part gets its own dimensioned drawing sheet with hidden lines and a hole table, ready for the workshop.</p>
+  </div>
+  <nav aria-label="Site">
+    <a href="#how">How it works</a>
+    <a href="#python">Python version</a>
+    <a href="https://github.com/srivatsa-dotcom/3d_to_2d_drawing_converter">GitHub</a>
+  </nav>
+</header>
+
+<main class="app">
+  <aside class="rail">
+    <label class="drop" id="drop">
+      <strong>Drop a 3D file</strong>
+      <span>or click to choose a .step, .stp, .iges or .stl file</span>
+      <input id="file" type="file" accept=".step,.stp,.iges,.igs,.brep,.stl" aria-label="Choose a 3D file">
+    </label>
+    <p class="privacy">Your file never leaves your computer. All processing happens in this browser tab. <button class="linkbtn" id="sample" type="button">Reload the sample robot</button></p>
+
+    <fieldset>
+      <legend>Sheet settings</legend>
+      <label class="f">Projection
+        <select id="opt-proj">
+          <option value="first" selected>First angle (India, Europe)</option>
+          <option value="third">Third angle (USA)</option>
+        </select>
+      </label>
+      <label class="f">Sheet size
+        <select id="opt-sheet"><option selected>A3</option><option>A4</option></select>
+      </label>
+      <label class="f">Material
+        <input id="opt-material" type="text" placeholder="e.g. Al 6061-T6">
+      </label>
+      <label class="f">Tolerance
+        <input id="opt-tol" type="text" placeholder="e.g. ±0.1 mm">
+      </label>
+      <label class="check"><input id="opt-hidden" type="checkbox" checked> Show hidden lines</label>
+      <label class="f wide">Edge angle for STL meshes (degrees)
+        <input id="opt-crease" type="number" min="5" max="80" step="1" value="25">
+      </label>
+    </fieldset>
+
+    <div class="parts">
+      <h2>Parts list <small id="parts-count">no file yet</small></h2>
+      <div class="tablewrap">
+        <table id="parts">
+          <thead><tr><th>Item</th><th>Part</th><th>Qty</th><th>Size (mm)</th><th>Holes</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </aside>
+
+  <section class="viewer" aria-label="Drawing preview">
+    <div class="toolbar">
+      <div>
+        <h2 id="sheet-title">No part selected</h2>
+        <div class="meta" id="sheet-meta">Choose a part from the list</div>
+      </div>
+      <div class="actions">
+        <button class="b" id="dl-pdf" data-needs-model>PDF</button>
+        <button class="b" id="dl-dxf" data-needs-model>DXF</button>
+        <button class="b" id="dl-svg" data-needs-model>SVG</button>
+        <button class="b" id="dl-cut" data-needs-model hidden>Laser-cut DXF</button>
+        <button class="b primary" id="dl-all" data-needs-model>Download all parts (ZIP)</button>
+      </div>
+    </div>
+    <div class="stage">
+      <div id="sheet" role="img" aria-label="Drawing sheet preview"></div>
+      <div class="stagefoot">
+        <span id="status" role="status" aria-live="polite">Loading…</span>
+        <span><span id="more-sheets"></span> Scroll to zoom, drag to pan, <button class="linkbtn" id="fit" type="button">fit sheet</button></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="info">
+  <section id="how">
+    <h2>How it works</h2>
+    <ol>
+      <li><b>Split.</b> The model is broken into parts. A STEP file keeps its part names. Identical parts, like four wheels, get one drawing with the right quantity.</li>
+      <li><b>Project.</b> Each part is drawn in front, top and side views plus an isometric view. Hidden edges are dashed.</li>
+      <li><b>Measure.</b> Overall dimensions are added, and every round hole goes into a hole table with its position, diameter, depth or THRU, counterbore and bolt circle.</li>
+      <li><b>Export.</b> Download each sheet as PDF, DXF or SVG. Flat plates also get a 1:1 DXF outline for a laser cutter or CNC router.</li>
+    </ol>
+  </section>
+  <section>
+    <h2>Before you send it to a shop</h2>
+    <ul>
+      <li>Fill in the material and tolerance boxes. They print in every title block.</li>
+      <li>Thread callouts, surface finish and dimensions for slots or pockets are not added automatically. Add them in the DXF.</li>
+      <li>STL files have no part names and no true circles. STEP gives the best results.</li>
+      <li>If an STL fuses several parts into one body, export the parts separately first.</li>
+      <li>Hole sizes ending in "?" are guesses, such as M3 clearance. Confirm them.</li>
+    </ul>
+  </section>
+  <section id="python">
+    <h2>Python version</h2>
+    <p>For batch work or very large assemblies, the same converter runs from the command line using CadQuery and OpenCascade, with exact geometry.</p>
+<pre>pip install -r python/requirements.txt
+python python/step2drawings.py robot.step -o drawings
+python python/stl2drawings.py model.stl -o drawings</pre>
+    <p><a href="https://github.com/srivatsa-dotcom/3d_to_2d_drawing_converter/tree/main/python">Get the scripts on GitHub</a></p>
+  </section>
+</div>
+
+<footer>
+  <span>Free and open source. STEP reading by <a href="https://github.com/kovacsv/occt-import-js">occt-import-js</a> (OpenCascade).</span>
+  <span>Always check a generated drawing before manufacturing.</span>
+</footer>
+
+<script src="vendor/occt-import-js.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+cadquery
+ezdxf
+matplotlib
+trimesh
+rtree
+scipy
+embreex
